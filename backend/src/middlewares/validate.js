@@ -27,7 +27,9 @@ const loginSchema = Joi.object({
 
 // ── Prayer Schema ──
 const updatePrayerSchema = Joi.object({
-  status: Joi.string().valid('performed', 'missed', 'late', 'pending').required(),
+  status: Joi.string()
+    .valid('pending', 'with_jamaat', 'on_time', 'qaza', 'umar_qaza', 'missed')
+    .required(),
   performedAt: Joi.string().pattern(/^\d{2}:\d{2}$/).allow(null, '').optional(),
   note: Joi.string().max(200).allow('').optional(),
 });

@@ -32,25 +32,39 @@ const updatePrayer = async (req, res) => {
       return sendError(res, 'Invalid prayer name.', 400);
     }
 
-    const update = {
-      [`prayers.${prayer}.status`]: status,
-      [`prayers.${prayer}.performedAt`]: performedAt || null,
-      [`prayers.${prayer}.note`]: note || '',
-    };
+    // Find existing or build a fresh document — avoids upsert enum issues
+    let log = await PrayerLog.findOne({ userId: req.user._id, date });
 
-    let log = await PrayerLog.findOneAndUpdate(
-      { userId: req.user._id, date },
-      { $set: update },
-      { new: true, upsert: true }
-    );
+    if (!log) {
+      // Create with all prayers initialised to 'pending'
+      const prayers = {};
+      PRAYERS.forEach((p) => {
+        prayers[p] = { status: 'pending', performedAt: null, note: '' };
+      });
+      log = new PrayerLog({ userId: req.user._id, date, prayers });
+    }
 
-    // Recalculate completion (trigger pre-save hook by saving)
+    if (!log.prayers) {
+      log.prayers = {};
+    }
+    if (!log.prayers[prayer]) {
+      log.prayers[prayer] = { status: 'pending', performedAt: null, note: '' };
+    }
+
+    // Update the specific prayer
+    log.prayers[prayer].status      = status;
+    log.prayers[prayer].performedAt = performedAt || null;
+    log.prayers[prayer].note        = note || '';
+
+    // Tell Mongoose the nested object changed (required for mixed/nested paths)
+    log.markModified(`prayers.${prayer}`);
+
+    // pre-save hook recalculates completionPercentage automatically
     await log.save();
-    log = await PrayerLog.findOne({ userId: req.user._id, date });
 
     return sendSuccess(res, log, 'Prayer updated.');
   } catch (error) {
-    console.error('Update prayer error:', error);
+    console.error('Update prayer error:', error.message);
     return sendError(res, 'Failed to update prayer.', 500);
   }
 };
@@ -88,13 +102,17 @@ const getMonthlyStats = async (req, res) => {
     };
 
     PRAYERS.forEach((p) => {
-      let performed = 0, missed = 0;
+      let performed = 0, missed = 0, qaza = 0;
       logs.forEach((l) => {
         const s = l.prayers[p]?.status;
-        if (s === 'performed' || s === 'late') performed++;
+        if (s === 'with_jamaat' || s === 'on_time') performed++;
         else if (s === 'missed') missed++;
+        else if (s === 'qaza' || s === 'umar_qaza') qaza++;
       });
-      stats.prayerBreakdown[p] = { performed, missed, pending: logs.length - performed - missed };
+      stats.prayerBreakdown[p] = {
+        performed, missed, qaza,
+        pending: logs.length - performed - missed - qaza,
+      };
       stats.performed += performed;
       stats.missed += missed;
     });
@@ -132,11 +150,11 @@ const getYearlyStats = async (req, res) => {
       const month = parseInt(l.date.split('-')[1]) - 1;
       PRAYERS.forEach((p) => {
         const s = l.prayers[p]?.status;
-        if (s === 'performed' || s === 'late') {
+        if (s === 'with_jamaat' || s === 'on_time') {
           monthlyBreakdown[month].performed++;
           totalPerformed++;
         }
-        if (s !== 'pending') totalPossible++;
+        if (s && s !== 'pending') totalPossible++;
         monthlyBreakdown[month].total++;
       });
     });

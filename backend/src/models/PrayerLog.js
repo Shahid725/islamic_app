@@ -4,7 +4,8 @@ const prayerStatusSchema = new mongoose.Schema(
   {
     status: {
       type: String,
-      enum: ['pending', 'performed', 'missed', 'late'],
+      // with_jamaat | on_time | qaza | umar_qaza | missed | pending
+      enum: ['pending', 'with_jamaat', 'on_time', 'qaza', 'umar_qaza', 'missed'],
       default: 'pending',
     },
     performedAt: { type: String, default: null }, // HH:mm string
@@ -42,14 +43,16 @@ const prayerLogSchema = new mongoose.Schema(
 prayerLogSchema.index({ userId: 1, date: 1 }, { unique: true });
 
 // Auto-calculate completion percentage before save
-prayerLogSchema.pre('save', function (next) {
+// with_jamaat=100%, on_time=100%, qaza=50%, umar_qaza=25%, missed=0%
+prayerLogSchema.pre('save', function () {
   const prayers = this.prayers;
   const names = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
-  const performed = names.filter(
-    (p) => prayers[p] && (prayers[p].status === 'performed' || prayers[p].status === 'late')
-  ).length;
-  this.completionPercentage = Math.round((performed / 5) * 100);
-  next();
+  const SCORE = { with_jamaat: 1, on_time: 1, qaza: 0.5, umar_qaza: 0.25, missed: 0, pending: 0 };
+  const totalScore = names.reduce((sum, p) => {
+    const s = prayers?.[p]?.status || 'pending';
+    return sum + (SCORE[s] ?? 0);
+  }, 0);
+  this.completionPercentage = Math.round((totalScore / 5) * 100);
 });
 
 module.exports = mongoose.model('PrayerLog', prayerLogSchema);
